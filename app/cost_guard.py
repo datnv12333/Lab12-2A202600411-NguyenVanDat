@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
+from app.config import settings as _settings
+
 logger = logging.getLogger(__name__)
 
 _INPUT_PRICE_PER_1K = 0.00015   # GPT-4o-mini: $0.15 / 1M input tokens
@@ -183,7 +185,6 @@ class CostGuard:
 
 
 # Singleton — reads budget from env via settings
-from app.config import settings as _settings
 cost_guard = CostGuard(
     per_user_budget_usd=_settings.daily_budget_usd,
     global_budget_usd=_settings.daily_budget_usd * 10,

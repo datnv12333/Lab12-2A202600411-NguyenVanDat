@@ -1,6 +1,5 @@
 """Token-based cost guard — Redis-backed when available, in-memory fallback."""
 import logging
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -183,5 +182,9 @@ class CostGuard:
         }
 
 
-# Singleton — $1/user/day, $10 global/day
-cost_guard = CostGuard(per_user_budget_usd=1.0, global_budget_usd=10.0)
+# Singleton — reads budget from env via settings
+from app.config import settings as _settings
+cost_guard = CostGuard(
+    per_user_budget_usd=_settings.daily_budget_usd,
+    global_budget_usd=_settings.daily_budget_usd * 10,
+)

@@ -30,6 +30,42 @@
 
 ---
 
+### Exercise 1.2: Run basic version
+
+```bash
+cd 01-localhost-vs-production
+python3 -m uvicorn develop.app:app --host 0.0.0.0 --port 8000
+```
+
+```
+INFO:     Started server process [53216]
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+```
+
+```bash
+curl http://localhost:8000/
+{"message":"Hello! Agent is running on my machine :)"}
+
+curl -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What is Docker?"}'
+```
+
+Terminal log (anti-pattern rõ ràng):
+
+```
+[DEBUG] Got question: What is Docker?
+[DEBUG] Using key: sk-hardcoded-fake-key-never-do-this   ← ❌ secret bị leak ra log
+[DEBUG] Response: Container là cách đóng gói app...
+```
+
+```json
+{"answer":"Container là cách đóng gói app để chạy ở mọi nơi. Build once, run anywhere!"}
+```
+
+---
+
 ### Exercise 1.3: Comparison table
 
 | Feature | Develop (❌) | Production (✅) | Tại sao quan trọng? |
@@ -57,19 +93,49 @@
 
 1. Base image: `python:3.11` — full Python distribution (~1.67 GB), có đầy đủ compiler, headers, tools
 2. Working directory: `/app`
+3. Copy requirements trước khi copy code — vì Docker cache layer theo thứ tự. `requirements.txt` ít thay đổi hơn code, nên layer `pip install` được cache lại → rebuild chỉ chạy khi `requirements.txt` đổi, không phải mỗi lần sửa code
+4. `CMD` vs `ENTRYPOINT`: `CMD` là default command, có thể bị override khi `docker run image <other-cmd>`. `ENTRYPOINT` cố định executable, không bị override — dùng cho app chính thức. Ví dụ: `ENTRYPOINT ["uvicorn"]` + `CMD ["app:app"]` → có thể override args nhưng không override binary
 
 **Production (`02-docker/production/Dockerfile`) — Multi-stage:**
 
 - **Stage 1 (builder):** Base image `python:3.11-slim`, WORKDIR `/build` — dùng gcc/libpq-dev để compile native deps
-- **Stage 2 (runtime):** Base image `python:3.11-slim`, WORKDIR `/app` — chỉ copy `/install` từ builder, không có build tools
+- **Stage 2 (runtime):** Base image `python:3.11-slim`, WORKDIR `/app` — chỉ copy packages đã build từ stage 1, không có build tools
 
 Tại sao multi-stage quan trọng: Stage runtime không chứa pip, gcc, build metadata → ít attack surface hơn, image nhỏ hơn đáng kể.
+
+### Exercise 2.2: Build and run basic container
+
+```bash
+# Build từ project root (Dockerfile copy utils/ từ context)
+docker build -f 02-docker/develop/Dockerfile -t agent-develop .
+docker run -p 8000:8000 agent-develop
+```
+
+```
+INFO:     Started server process [1]
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000
+```
+
+```bash
+curl http://localhost:8000/
+{"message":"Agent is running in a Docker container!"}
+
+curl -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What is Docker?"}'
+{"answer":"Container là cách đóng gói app để chạy ở mọi nơi. Build once, run anywhere!"}
+```
+
+Container chạy thành công — app nhận được request từ bên ngoài (khác với `localhost` anti-pattern ở develop).
+
+---
 
 ### Exercise 2.3: Image size comparison
 
 - Develop (`agent-develop`): **1,670 MB** (1.67 GB)
-- Production (`production-agent`): **266 MB**
-- Reduction: **84%** nhỏ hơn (~6.3x)
+- Production (`production-agent`): **312 MB**
+- Reduction: **81%** nhỏ hơn (~5.4x)
 
 **Lý do chênh lệch:**
 
@@ -82,12 +148,75 @@ Tại sao multi-stage quan trọng: Stage runtime không chứa pip, gcc, build 
 
 ---
 
+### Exercise 2.4: Architecture diagram và test stack
+
+**Architecture:**
+
+```
+Internet
+    │
+    ▼ port 80
+┌─────────┐
+│  Nginx  │  reverse proxy, rate limiting
+└────┬────┘
+     │ upstream agent:8000
+     ▼
+┌─────────┐     ┌─────────┐     ┌──────────┐
+│  Agent  │────▶│  Redis  │     │  Qdrant  │
+│ (FastAPI│     │ :6379   │     │  :6333   │
+│  :8000) │     │ cache   │     │ vector DB│
+└─────────┘     └─────────┘     └──────────┘
+```
+
+Docker Compose stack: `docker compose up --build` (từ `02-docker/production/`)
+
+```bash
+# Test sau khi stack up
+curl http://localhost/health
+{"status":"ok","version":"2.0.0","environment":"staging",...}
+
+curl -X POST http://localhost/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What is Docker?"}'
+{"answer":"Container là cách đóng gói app để chạy ở mọi nơi..."}
+
+# Xem headers — traffic đi qua Nginx
+curl -I http://localhost/health
+HTTP/1.1 200 OK
+Server: nginx/1.27...
+```
+
+Services: 4 containers (nginx, agent, redis, qdrant), tất cả giao tiếp qua Docker internal network, chỉ nginx expose port ra ngoài.
+
+---
+
 ## Part 3: Cloud Deployment
 
 ### Exercise 3.1: Railway deployment
 
-- URL: <https://web-production-1ef04.up.railway.app>
+- URL: <https://ai-agent-production-production-83c0.up.railway.app>
 - Response: `{"status":"ok","uptime_seconds":442.3,"platform":"Railway","environment":"development","timestamp":"2026-04-17T10:26:15.039899+00:00"}`
+
+---
+
+### Exercise 3.2: So sánh Railway vs Render config
+
+| Tiêu chí | Railway (`railway.toml`) | Render (`render.yaml`) |
+|---------|--------------------------|------------------------|
+| **Format** | TOML | YAML |
+| **Build** | `builder = "NIXPACKS"` (auto-detect) hoặc `"DOCKERFILE"` | `buildCommand: pip install -r requirements.txt` |
+| **Start** | `startCommand = "uvicorn app:app --host 0.0.0.0 --port $PORT"` | `startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT` |
+| **Health check** | `healthcheckPath = "/health"` | `healthCheckPath: /health` |
+| **Redis** | Plugin thêm riêng qua Dashboard | Khai báo thêm service `type: redis` trong cùng file |
+| **Env vars** | Set qua Dashboard hoặc `railway variables set` | Khai báo trong `render.yaml`, giá trị secret set trên Dashboard |
+| **Auto-deploy** | Mặc định bật khi connect GitHub | `autoDeploy: true` |
+| **Free tier** | Có (với giới hạn usage) | Có (plan: free, ngủ sau 15 phút inactive) |
+
+**Điểm khác biệt chính:**
+
+- Railway thiên về developer experience — ít config hơn, auto-detect nhiều hơn
+- Render có `generateValue: true` — tự sinh API key, không cần tự generate
+- Render định nghĩa toàn bộ infrastructure (web + redis) trong 1 file → dễ version control
 
 ---
 
@@ -451,7 +580,7 @@ Client → POST /ask (X-API-Key) → RateLimiter → CostGuard → ConvHistory(R
 
 **Stack:** FastAPI + Redis + uvicorn, deployed on Railway.
 
-**Public URL:** <https://web-production-1ef04.up.railway.app>
+**Public URL:** <https://ai-agent-production-production-83c0.up.railway.app>
 
 ---
 
@@ -460,7 +589,7 @@ Client → POST /ask (X-API-Key) → RateLimiter → CostGuard → ConvHistory(R
 **Agent hoạt động:**
 
 ```bash
-curl -X POST https://web-production-1ef04.up.railway.app/ask \
+curl -X POST https://ai-agent-production-production-83c0.up.railway.app/ask \
   -H "X-API-Key: $AGENT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"user_id": "test", "question": "What is Docker?"}'
@@ -524,9 +653,15 @@ services:
 
 ```python
 # app/config.py
-AGENT_API_KEY = os.getenv("AGENT_API_KEY", "dev-key-change-me")
-REDIS_URL = os.getenv("REDIS_URL", "")
-PORT = int(os.getenv("PORT", "8000"))
+@dataclass
+class Settings:
+    agent_api_key: str = field(default_factory=lambda: os.getenv("AGENT_API_KEY", "dev-key-change-me"))
+    redis_url: str = field(default_factory=lambda: os.getenv("REDIS_URL", ""))
+    port: int = field(default_factory=lambda: int(os.getenv("PORT", "8000")))
+    # Validate ở startup — raise ValueError nếu production dùng default key
+    def validate(self): ...
+
+settings = Settings().validate()
 ```
 
 ---
@@ -549,10 +684,10 @@ Request 11:    HTTP 429  {"error":"Rate limit exceeded","retry_after_seconds":..
                Headers:  X-RateLimit-Limit: 10, X-RateLimit-Remaining: 0, Retry-After: N
 ```
 
-**Cost guard** — Redis-backed, per-user $1/ngày + global $10/ngày:
+**Cost guard** — Redis-backed, per-user `$DAILY_BUDGET_USD`/ngày + global `10×DAILY_BUDGET_USD`/ngày (default: $5/user, $50/global):
 
 ```
-Trước request: check_budget() → 402 nếu user vượt $1, 503 nếu global vượt $10
+Trước request: check_budget() → 402 nếu user vượt $5, 503 nếu global vượt $50
 Sau request:   record_usage() → incr Redis hash cost:{date}:{user_id}
 ```
 
@@ -570,7 +705,7 @@ grep -r "sk-" app/   # → không tìm thấy gì
 
 ```bash
 curl .../health
-{"status":"ok","redis_connected":true,"uptime_seconds":442.3,...}
+{"status":"ok","version":"1.0.0","environment":"production","uptime_seconds":1125.4,"llm":"mock","redis_connected":false,"timestamp":"2026-04-17T15:53:34.274185+00:00"}
 
 curl .../ready
 {"ready":true}    # 200 khi sẵn sàng
@@ -611,7 +746,7 @@ builder = "DOCKERFILE"
 
 [deploy]
 healthcheckPath = "/health"
-healthcheckTimeout = 300
+healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
 ```
 
@@ -627,11 +762,12 @@ restartPolicyType = "ON_FAILURE"
 **Verification:**
 
 ```bash
-curl https://web-production-1ef04.up.railway.app/health
-{"status":"ok","redis_connected":true,...}
+curl https://ai-agent-production-production-83c0.up.railway.app/health
+{"status":"ok","version":"1.0.0","environment":"production","uptime_seconds":1125.4,"llm":"mock","redis_connected":false,"timestamp":"2026-04-17T15:53:34.274185+00:00"}
 
-curl -X POST https://web-production-1ef04.up.railway.app/ask \
+curl -X POST https://ai-agent-production-production-83c0.up.railway.app/ask \
   -H "X-API-Key: $AGENT_API_KEY" \
+  -H "Content-Type: application/json" \
   -d '{"user_id":"test","question":"Hello"}'
-{"answer":"...","history_length":2,...}
+{"user_id":"test","question":"Hello","answer":"Agent đang hoạt động tốt!","model":"gpt-4o-mini","history_length":2,"timestamp":"2026-04-17T16:02:33.050899+00:00"}
 ```

@@ -2,7 +2,7 @@
 
 ## Public URL
 
-<https://web-production-1ef04.up.railway.app>
+<https://ai-agent-production-production-83c0.up.railway.app>
 
 ## Platform
 
@@ -15,36 +15,36 @@ Railway
 ### Health Check
 
 ```bash
-curl https://web-production-1ef04.up.railway.app/health
-{"message":"AI Agent running on Railway!","docs":"/docs","health":"/health"}
+curl https://ai-agent-production-production-83c0.up.railway.app/health
+{"status":"ok","version":"1.0.0","environment":"production","uptime_seconds":1125.4,"llm":"mock","redis_connected":false,"timestamp":"2026-04-17T15:53:34.274185+00:00"}
 ```
 
 ### Readiness Check
 
 ```bash
-curl https://web-production-1ef04.up.railway.app/ready
-{"ready":true,"checks":{"app":true}}
+curl https://ai-agent-production-production-83c0.up.railway.app/ready
+{"ready":true}
 ```
 
 ### API Test (with authentication)
 
 ```bash
-curl -X POST https://web-production-1ef04.up.railway.app/ask \
+curl -X POST https://ai-agent-production-production-83c0.up.railway.app/ask \
   -H "X-API-Key: YOUR_AGENT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"user_id": "test-user", "question": "What is deployment?"}'
 ```
 
-{"user_id":"test-user","question":"What is deployment?","answer":"Deployment là quá trình đưa code từ máy bạn lên server để người khác dùng được.","platform":"Railway"}
+{"user_id":"test-user","question":"What is deployment?","answer":"Deployment là quá trình đưa code từ máy bạn lên server để người khác dùng được.","model":"gpt-4o-mini","history_length":4,"timestamp":"2026-04-17T16:02:33.050899+00:00"}
 
 ### Metrics (protected)
 
 ```bash
-curl https://web-production-1ef04.up.railway.app/metrics \
+curl https://ai-agent-production-production-83c0.up.railway.app/metrics \
   -H "X-API-Key: YOUR_AGENT_API_KEY"
 ```
 
-{"uptime_seconds":503.9,"total_requests":2,"requests_by_key":{"YOUR_AGENT_API_KEY":2},"daily_spend_usd":0.0002,"daily_budget_usd":10.0,"budget_remaining_usd":9.9998,"rate_limit_per_minute":10,"redis_connected":false,"environment":"development","date":"2026-04-17"}
+{"uptime_seconds":1670.4,"total_requests":14,"error_count":0,"rate_limit":{"requests_in_window":0,"limit":10,"remaining":10,"backend":"memory"},"daily_spend_usd":0.0,"daily_budget_usd":50.0,"redis_connected":false,"environment":"production","date":"2026-04-17"}
 
 ---
 
